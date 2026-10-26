@@ -569,8 +569,4 @@ def reset_to_default_timetable():
     else:
         messagebox.showinfo("Info", "Already using default timetable.")
         return False
-                messagebox.showerror("Error", f"Failed to reset timetable: {str(e)}")
-                return False
-    else:
-        messagebox.showinfo("Info", "Already using default timetable.")
-        return False
+

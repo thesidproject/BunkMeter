@@ -1,45 +1,104 @@
-# Python
+# ==============================================================================
+# Byte-compiled / optimized / C-extensions
+# ==============================================================================
 __pycache__/
 *.py[cod]
+*$py.class
 *.so
 *.egg
 *.egg-info/
 dist/
 build/
 .eggs/
+develop-eggs/
+downloads/
+eggs/
+parts/
+var/
+wheels/
+share/python-wheels/
+*.manifest
+*.spec
 
-# Virtual environments
+# ==============================================================================
+# PyInstaller / Packaging (Standalone desktop executables)
+# ==============================================================================
+*.exe
+*.msi
+*.app
+
+# ==============================================================================
+# Virtual Environments & Package Managers
+# ==============================================================================
 .venv/
 venv/
 env/
+ENV/
+env.bak/
+venv.bak/
+.conda/
 
-# IDE
+# Pixi environment (track config/lock, ignore runtime env)
+.pixi/*
+!.pixi/config.toml
+
+# ==============================================================================
+# IDEs, Editors & Tooling Caches
+# ==============================================================================
 .idea/
 .vscode/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
+.mypy_cache/
+.pytype/
+.ruff_cache/
 
-# Testing
+# ==============================================================================
+# Testing & Code Coverage
+# ==============================================================================
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
+*.cover
 htmlcov/
 
-# BunkMeter user data (don't commit personal data)
+# ==============================================================================
+# Operating System Artifacts
+# ==============================================================================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# ==============================================================================
+# BunkMeter User & Runtime Data (Private / Local state)
+# ==============================================================================
 data.json
 custom_timetable.json
 attendance_report_*.txt
+attendance_report_*.csv
 my_timetable.csv
+/tkinter_backup
 
-# Misc
+# ==============================================================================
+# Logs, Backups & Agent Rules
+# ==============================================================================
 *.log
 *.bak
 *_old.py
-.DS_Store
-Thumbs.db
-/.github
-/tkinter_backup
-*.html
-# pixi environments
-.pixi/*
-!.pixi/config.toml
 GEMINI.md
+
+# Target specific instructions rather than blocking the entire .github folder
+.github/copilot-instructions.md
