@@ -86,6 +86,43 @@ app_data = {
     "subjects": []
 }
 
+def normalize_batch_str(text):
+    """Normalize batch string by removing separators and whitespace, uppercased"""
+    if not text:
+        return ""
+    return text.replace("/", "").replace("&", "").replace("-", "").replace(" ", "").upper()
+
+
+def extract_batch_names():
+    """
+    Extract all unique batch names from active timetable.
+    Scans entries with '/' and '()' like:
+    'CN Lab (B1&B3) / DAA Lab (B2&B4)' -> ['B1&B3', 'B2&B4']
+    """
+    import re
+    batch_names = set()
+    try:
+        active_timetable = get_active_timetable()
+        for day, time_slots_dict in active_timetable.items():
+            for time_slot, cell_value in time_slots_dict.items():
+                if not cell_value or "Lunch" in cell_value:
+                    continue
+                # Only check slots that are batch-specific (contain '/' and '()')
+                if "/" in cell_value and "(" in cell_value:
+                    matches = re.findall(r'\(([^)]+)\)', cell_value)
+                    for match in matches:
+                        batch_name = match.strip()
+                        if batch_name and batch_name not in ["Lab", "Tutorial", "Elective", "Optional"]:
+                            batch_names.add(batch_name)
+    except Exception as e:
+        print(f"Error extracting batch names: {e}")
+    
+    if not batch_names:
+        batch_names = {"B1/B3", "B2/B4"}
+    
+    return sorted(list(batch_names))
+
+
 def extract_subject_name(cell_value):
     """Extract subject name - now keeps full names, only excludes lunch/empty"""
     if not cell_value or cell_value.strip() == "":
@@ -151,8 +188,8 @@ def parse_timetable_csv(batch):
                             # Flexible batch matching: handles multiple formats
                             # B1/B3 matches B1&B3, Group A matches GroupA, Group-A, etc.
                             # Normalize both batch and part for comparison (remove spaces, hyphens, slashes)
-                            normalized_batch = batch.replace("/", "").replace(" ", "").replace("-", "").upper()
-                            normalized_part = part.replace("&", "").replace(" ", "").replace("-", "").upper()
+                            normalized_batch = normalize_batch_str(batch)
+                            normalized_part = normalize_batch_str(part)
                             
                             # Check if normalized batch appears in the normalized part
                             if normalized_batch in normalized_part:
@@ -194,8 +231,8 @@ def get_subjects_for_day(day_name, batch):
                         # Flexible batch matching: handles multiple formats
                         # B1/B3 matches B1&B3, Group A matches GroupA, Group-A, etc.
                         # Normalize both batch and part for comparison (remove spaces, hyphens, slashes)
-                        normalized_batch = batch.replace("/", "").replace(" ", "").replace("-", "").upper()
-                        normalized_part = part.replace("&", "").replace(" ", "").replace("-", "").upper()
+                        normalized_batch = normalize_batch_str(batch)
+                        normalized_part = normalize_batch_str(part)
                         
                         # Check if normalized batch appears in the normalized part
                         if normalized_batch in normalized_part:
@@ -261,32 +298,33 @@ def count_subject_classes(subject_name, batch, start_date_str, end_date_str, hol
     if not subject_schedule:
         return 0
     
-    # Helper to check if a date is a holiday (supports both formats)
-    def is_holiday(date):
-        for holiday in holidays:
-            try:
-                # New format: {name, date}
-                if "date" in holiday:
-                    h_date = datetime.strptime(holiday['date'], "%Y-%m-%d")
-                    if h_date == date:
-                        return True
-                # Old format: {name, start, end}
-                elif "start" in holiday and "end" in holiday:
-                    h_start = datetime.strptime(holiday['start'], "%Y-%m-%d")
-                    h_end = datetime.strptime(holiday['end'], "%Y-%m-%d")
-                    if h_start <= date <= h_end:
-                        return True
-            except (ValueError, TypeError, KeyError):
-                continue
-        return False
+    # Pre-compute holiday dates set for O(1) fast lookup
+    holiday_dates = set()
+    for holiday in (holidays or []):
+        try:
+            # New format: {name, date}
+            if "date" in holiday and holiday.get("date"):
+                h_dt = datetime.strptime(holiday['date'], "%Y-%m-%d").date()
+                holiday_dates.add(h_dt)
+            # Old format: {name, start, end}
+            elif "start" in holiday and "end" in holiday and holiday.get("start") and holiday.get("end"):
+                h_start = datetime.strptime(holiday['start'], "%Y-%m-%d").date()
+                h_end = datetime.strptime(holiday['end'], "%Y-%m-%d").date()
+                curr_h = h_start
+                while curr_h <= h_end:
+                    holiday_dates.add(curr_h)
+                    curr_h += timedelta(days=1)
+        except (ValueError, TypeError, KeyError):
+            continue
     
     # Count actual occurrences
     total_classes = 0
-    current = start
-    while current <= end:
+    current = start.date()
+    end_date = end.date()
+    while current <= end_date:
         weekday = current.weekday()  # 0=Monday, 6=Sunday
         if weekday in subject_schedule:
-            if not is_holiday(current):
+            if current not in holiday_dates:
                 total_classes += subject_schedule[weekday]
         current += timedelta(days=1)
     
@@ -294,8 +332,8 @@ def count_subject_classes(subject_name, batch, start_date_str, end_date_str, hol
 
 def save_data():
     try:
-        with open(DATA_FILE, 'w') as f:
-            json.dump(app_data, f, indent=2)
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(app_data, f, indent=2, ensure_ascii=False)
     except IOError as e:
         messagebox.showerror("Error", f"Failed to write to file (permission denied or disk full): {str(e)}")
     except TypeError as e:
@@ -311,26 +349,24 @@ def load_data():
     - Assignment creates a NEW dict, breaking references held by other modules
     - .update() modifies the SAME dict object in-place
     - This ensures all modules see the same data after loading
-    
-    Without this fix:
-    - Module A calls get_app_data() → gets reference to dict_X
-    - load_data() does app_data = new_dict → now app_data points to dict_Y
-    - Module A still has reference to empty dict_X!
-    
-    With this fix:
-    - Module A calls get_app_data() → gets reference to dict_X
-    - load_data() updates dict_X in-place
-    - Module A's reference to dict_X now has the loaded data!
     """
     global app_data
     if os.path.exists(DATA_FILE):
         try:
-            with open(DATA_FILE, 'r') as f:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
                 loaded_data = json.load(f)
+            if not isinstance(loaded_data, dict):
+                loaded_data = {}
             # Clear existing data and update with loaded data IN-PLACE
-            # This preserves references held by other modules
             app_data.clear()
             app_data.update(loaded_data)
+            # Ensure required schema keys are always present
+            app_data.setdefault("batch", None)
+            app_data.setdefault("semester_start", None)
+            app_data.setdefault("semester_end", None)
+            app_data.setdefault("holidays", [])
+            app_data.setdefault("subjects", [])
+            app_data.setdefault("skipped_days", [])
             return True
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load data: {str(e)}")
@@ -345,7 +381,7 @@ def get_active_timetable():
     """Get the active timetable (custom if exists, otherwise default)"""
     if os.path.exists(CUSTOM_TIMETABLE_FILE):
         try:
-            with open(CUSTOM_TIMETABLE_FILE, 'r') as f:
+            with open(CUSTOM_TIMETABLE_FILE, 'r', encoding='utf-8') as f:
                 custom_timetable = json.load(f)
                 # Validate structure - must be dict with day keys
                 if not isinstance(custom_timetable, dict):
@@ -396,8 +432,8 @@ def export_timetable_to_csv(filepath=None):
                             start_time = time_slot.split("-")[0].strip()
                             hour, minute = start_time.split(":")
                             hour = int(hour)
-                            # Convert 01:00-05:00 to PM times (13:00-17:00) for proper sorting
-                            if 1 <= hour <= 5:
+                            # Convert 01:00-07:00 to PM times (13:00-19:00) for proper sorting
+                            if 1 <= hour <= 7:
                                 hour += 12
                             return hour * 60 + int(minute)
                         except:
@@ -434,8 +470,8 @@ def import_timetable_from_csv(filepath=None):
         for day in required_days:
             new_timetable[day] = {}
         
-        # Read CSV
-        with open(filepath, 'r', encoding='utf-8') as f:
+        # Read CSV with utf-8-sig to automatically handle Excel UTF-8 BOM if present
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             
             # Validate headers exist
@@ -443,40 +479,49 @@ def import_timetable_from_csv(filepath=None):
                 messagebox.showerror("Error", "CSV file is empty or has no headers")
                 return False
             
+            # Normalize fieldnames to strip leading/trailing whitespace
+            clean_cols = {col.strip().title(): col for col in reader.fieldnames if col}
+            
             # Validate required columns
-            if not all(col in reader.fieldnames for col in ['Day', 'Time', 'Subject']):
+            if not all(col in clean_cols for col in ['Day', 'Time', 'Subject']):
                 messagebox.showerror("Error", "CSV must have columns: Day, Time, Subject")
                 return False
+            
+            day_col = clean_cols['Day']
+            time_col = clean_cols['Time']
+            subject_col = clean_cols['Subject']
             
             row_count = 0
             for row in reader:
                 row_count += 1
+                # Skip completely blank lines
+                if not any(v.strip() for v in row.values() if v):
+                    continue
+                
                 # Validate row has required fields
-                if not row.get('Day') or not row.get('Time'):
+                if not row.get(day_col) or not row.get(time_col):
                     messagebox.showwarning("Warning", f"Row {row_count}: Missing Day or Time. Skipping...")
                     continue
                 
-                day = row['Day'].strip().upper()
-                time = row['Time'].strip()
-                subject = row.get('Subject', '').strip()  # Subject can be empty
+                day = row[day_col].strip().upper()
+                time = row[time_col].strip()
+                subject = row.get(subject_col, '').strip()  # Subject can be empty
                 
                 if day not in required_days:
                     messagebox.showwarning("Warning", f"Invalid day: {day}. Skipping...")
                     continue
                 
-                # Accept ANY time format (including 08:00-09:00, custom times, etc.)
-                # No validation - full flexibility
                 new_timetable[day][time] = subject
         
-        # Validate all days present
-        for day in required_days:
-            if day not in new_timetable or not new_timetable[day]:
-                response = messagebox.askyesno(
-                    "Missing Days",
-                    f"Day {day} is missing or incomplete. Continue anyway?"
-                )
-                if not response:
-                    return False
+        # Check for missing days and prompt user once if needed
+        missing_days = [day for day in required_days if not new_timetable.get(day)]
+        if missing_days:
+            response = messagebox.askyesno(
+                "Missing Days",
+                f"The following days have no classes scheduled:\n{', '.join(missing_days)}\n\nContinue anyway?"
+            )
+            if not response:
+                return False
         
         # Preview and confirm
         subject_count = sum(1 for day in new_timetable.values() 
@@ -494,8 +539,8 @@ def import_timetable_from_csv(filepath=None):
         
         if response:
             # Save custom timetable
-            with open(CUSTOM_TIMETABLE_FILE, 'w') as f:
-                json.dump(new_timetable, f, indent=2)
+            with open(CUSTOM_TIMETABLE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(new_timetable, f, indent=2, ensure_ascii=False)
             
             return True
         
@@ -517,9 +562,13 @@ def reset_to_default_timetable():
         if response:
             try:
                 os.remove(CUSTOM_TIMETABLE_FILE)
-                messagebox.showinfo("Success", "Timetable reset to default.\nRestart the app to apply changes.")
                 return True
             except Exception as e:
+                messagebox.showerror("Error", f"Failed to reset timetable: {str(e)}")
+                return False
+    else:
+        messagebox.showinfo("Info", "Already using default timetable.")
+        return False
                 messagebox.showerror("Error", f"Failed to reset timetable: {str(e)}")
                 return False
     else:

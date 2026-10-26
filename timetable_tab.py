@@ -138,8 +138,8 @@ class TimetableTab:
                     hour, minute = start_time.split(":")
                     hour = int(hour)
                     minute = int(minute)
-                    # If it's 01:00-05:00, it's PM (13:00-17:00)
-                    if 1 <= hour <= 5:
+                    # Convert 01:00-07:00 to PM times (13:00-19:00) for proper sorting
+                    if 1 <= hour <= 7:
                         hour += 12
                     return hour * 60 + minute
                 return 0
@@ -193,12 +193,11 @@ class TimetableTab:
         # Handle batch-specific entries: "Subject (BatchA) / Subject (BatchB)"
         if "/" in subject_cell and "(" in subject_cell:
             parts = subject_cell.split("/")
-            # Normalize batch for comparison (remove spaces, slashes, hyphens)
-            normalized_batch = batch.replace("/", "").replace(" ", "").replace("-", "").replace("&", "").upper()
+            from data_manager import normalize_batch_str
+            normalized_batch = normalize_batch_str(batch)
             
             for part in parts:
-                # Normalize part for comparison
-                normalized_part = part.replace("&", "").replace(" ", "").replace("-", "").upper()
+                normalized_part = normalize_batch_str(part)
                 
                 # Check if normalized batch appears in the normalized part
                 if normalized_batch in normalized_part:
@@ -211,21 +210,10 @@ class TimetableTab:
         return self.extract_subject_name(subject_cell)
     
     def extract_subject_name(self, cell_value):
+        """Extract clean subject name without mangling hyphens"""
         if not cell_value or cell_value.strip() == "":
             return ""
-        try:
-            if "-" in cell_value:
-                parts = cell_value.split("-")
-                if len(parts) > 1 and parts[1]:
-                    # Safely extract subject name
-                    subject_part = parts[1]
-                    if "(" in subject_part:
-                        return subject_part.split("(")[0].strip()
-                    return subject_part.strip()
-            return cell_value.strip()
-        except (IndexError, AttributeError) as e:
-            print(f"Error extracting subject name from '{cell_value}': {e}")
-            return cell_value.strip() if cell_value else ""
+        return cell_value.strip()
     
     def get_subject_colors(self, subject, time_slot):
         """

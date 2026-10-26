@@ -50,7 +50,10 @@ class BunkBuddyApp:
         
         # Create main UI
         self.create_ui()
-        # Initial tab will refresh on its own during creation
+        
+        # If setup is not complete, enter setup mode on setup tab
+        if not app_data.get("batch") or not app_data.get("semester_start") or not app_data.get("semester_end"):
+            self.setup_tab.enter_setup_mode()
     
     def show_first_time_setup(self):
         """
@@ -150,41 +153,13 @@ class BunkBuddyApp:
         def update_batch_options():
             """
             Dynamically detect and display batch options from timetable
-            
-            How it works:
-            1. Scans all timetable entries for format: "Subject (BatchName) / Subject (BatchName2)"
-            2. Extracts batch names from parentheses using regex
-            3. Creates radio buttons for each unique batch found
-            4. Falls back to default B1/B3, B2/B4 if no batches detected
-            
-            To modify batch detection:
-            - Change regex pattern in re.findall() to match your format
-            - Update fallback batch names in the 'if not batch_names' block
             """
             # Clear existing radio buttons before recreating them
             for widget in batch_container.winfo_children():
                 widget.destroy()
             
-            # Get active timetable (custom if imported, otherwise default)
-            from data_manager import get_active_timetable
-            import re
-            active_timetable = get_active_timetable()
-            batch_names = set()
-            
-            # Scan timetable for batch names in parentheses
-            for day_data in active_timetable.values():
-                for cell_value in day_data.values():
-                    if "/" in cell_value and "(" in cell_value:
-                        # Extract batch names from format: "Subject (GroupA) / Subject (GroupB)"
-                        # Regex \(([^)]+)\) matches text inside parentheses
-                        matches = re.findall(r'\(([^)]+)\)', cell_value)
-                        batch_names.update(matches)
-            
-            # Fallback: If no batches found, use default batches
-            if not batch_names:
-                batch_names = ["B1/B3", "B2/B4"]
-            else:
-                batch_names = sorted(list(batch_names))
+            from data_manager import extract_batch_names
+            batch_names = extract_batch_names()
             
             # Safe access - ensure batch_names is not empty before accessing
             if batch_names:
@@ -356,15 +331,20 @@ class BunkBuddyApp:
             if hasattr(self, 'setup_tab') and self.setup_tab.setup_mode:
                 # Get the clicked tab (use str() to get widget path - avoids Pylance warning about _w)
                 clicked_tab = self.notebook.tk.call(str(self.notebook), "identify", "tab", event.x, event.y)
-                if clicked_tab != "" and int(clicked_tab) != 0:  # Not the Setup tab
-                    messagebox.showwarning(
-                        "Setup Required",
-                        "Please complete the setup first:\n\n"
-                        "1. Select your batch\n"
-                        "2. Set semester start and end dates\n\n"
-                        "Then you can access other tabs."
-                    )
-                    return "break"  # Prevent tab switch
+                if clicked_tab != "":
+                    try:
+                        tab_idx = int(clicked_tab)
+                        if tab_idx != 0:  # Not the Setup tab
+                            messagebox.showwarning(
+                                "Setup Required",
+                                "Please complete the setup first:\n\n"
+                                "1. Select your batch\n"
+                                "2. Set semester start and end dates\n\n"
+                                "Then you can access other tabs."
+                            )
+                            return "break"  # Prevent tab switch
+                    except (ValueError, TypeError):
+                        pass
         
         self.notebook.bind('<Button-1>', on_tab_click, add='+')
         

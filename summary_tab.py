@@ -227,8 +227,8 @@ class SummaryTab:
         # Helper function for safe numeric conversion
         def safe_int(val):
             try:
-                return int(val) if val and val.isdigit() else 0
-            except (ValueError, AttributeError):
+                return int(str(val).strip())
+            except (ValueError, AttributeError, TypeError):
                 return 0
         
         def safe_float_from_pct(val):
@@ -380,10 +380,11 @@ class SummaryTab:
             total = subject_data["attendance_override"]["total"]
             is_override = True
         else:
+            sem_start = app_data.get("semester_start", "")
             total = count_subject_classes(
                 subject_name,
                 app_data.get("batch", ""),
-                app_data["semester_start"],
+                sem_start,
                 end_date,
                 app_data.get("holidays", [])
             )
@@ -393,7 +394,7 @@ class SummaryTab:
             holidays = app_data.get("holidays", [])
             absent_count = 0
             for date_str in absent_dates:
-                if date_str > today:
+                if date_str > today or (sem_start and date_str < sem_start):
                     continue
                 date_obj = parse_date(date_str)
                 if date_obj and not is_date_in_holidays(date_obj, holidays):
@@ -446,7 +447,8 @@ class SummaryTab:
                 # Formula: (present + x) / (total + x) >= 0.60
                 # Solving: present + x >= 0.60 * (total + x)
                 # x >= (0.60*total - present) / 0.40
-                classes_needed = max(0, int((0.60 * total - present) / 0.40) + 1)
+                import math
+                classes_needed = max(0, math.ceil((0.60 * total - present) / 0.40 - 1e-9))
                 tk.Label(
                     self.details_panel,
                     text=f"📈 Need {classes_needed} more classes\nwithout absence to reach 60%",
@@ -665,6 +667,15 @@ class SummaryTab:
             self.overall_warning_frame = None
         
         if not app_data.get("semester_start"):
+            msg_frame = tk.Frame(self.stats_frame, bg="#ffffff")
+            msg_frame.pack(fill=tk.BOTH, expand=True, pady=15)
+            tk.Label(
+                msg_frame,
+                text="⚙️ Setup Required: Please configure your semester start and end dates in the Setup tab.",
+                font=("Segoe UI", 12, "bold"),
+                bg="#ffffff",
+                fg="#1565c0"
+            ).pack(pady=10)
             return
         
         # Calculate metrics
@@ -677,6 +688,7 @@ class SummaryTab:
         # This ensures future dates within semester are NOT counted in attendance
         today = datetime.now().strftime("%Y-%m-%d")
         semester_end = app_data.get("semester_end")
+        sem_start = app_data.get("semester_start", "")
         
         # Calculate weeks only up to TODAY (ignore future dates)
         calculation_end_date = today
@@ -705,21 +717,21 @@ class SummaryTab:
                     total = count_subject_classes(
                         name, 
                         batch, 
-                        app_data["semester_start"], 
+                        sem_start, 
                         calculation_end_date, 
                         holidays
                     )
                 
                 # Calculate present classes (total - absent)
-                # CRITICAL: Only count absences up to TODAY (ignore future dates)
+                # CRITICAL: Only count absences up to TODAY (ignore future dates and dates before semester start)
                 # Exclude dates that fall on holidays from absent count
                 from calculations import parse_date, is_date_in_holidays
                 all_absent_dates = subject_data.get("absent_dates", [])
                 absent_count = 0
                 holidays = app_data.get("holidays", [])
                 for date_str in all_absent_dates:
-                    # Ignore future dates - only count past absences
-                    if date_str > today:
+                    # Ignore future dates and dates before semester start
+                    if date_str > today or (sem_start and date_str < sem_start):
                         continue
                     date_obj = parse_date(date_str)
                     if date_obj and not is_date_in_holidays(date_obj, holidays):
@@ -730,36 +742,34 @@ class SummaryTab:
             
             attendance_pct = calculate_attendance(present, total)
             safe_skip = calculate_safe_skip(present, total)
-            status, color = get_attendance_status(attendance_pct)
+            status_icon, color = get_subject_status(attendance_pct)
             
             # Create progress bar
             progress_bar = self.create_progress_bar(attendance_pct)
             
-            # Determine status icon and category (60% threshold for subjects)
-            if attendance_pct >= 75:
-                status_icon = "Excellent"
+            # Determine category tags (60% threshold for subjects)
+            if status_icon == "Excellent":
                 tag = "safe"
                 safe_count += 1
-            elif attendance_pct >= 60:
-                status_icon = "Safe"
+            elif status_icon == "Safe":
                 tag = "warning"
                 warning_count += 1
             else:
-                status_icon = "At Risk"
                 tag = "risk"
                 at_risk_count += 1
             
             total_attendance_pct += attendance_pct
             
             # Calculate remaining classes till semester end using accurate counting
-            # Count from tomorrow to semester end
+            # Count from tomorrow (or semester_start if future) to semester end
             if semester_end and today < semester_end:
                 from datetime import timedelta
                 tomorrow = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                rem_start = max(tomorrow, sem_start) if sem_start else tomorrow
                 remaining_classes = count_subject_classes(
                     name,
                     app_data.get("batch", ""),
-                    tomorrow,
+                    rem_start,
                     semester_end,
                     app_data.get("holidays", [])
                 )
@@ -879,7 +889,7 @@ class SummaryTab:
         try:
             filename = f"attendance_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             
-            with open(filename, 'w') as f:
+            with open(filename, 'w', encoding='utf-8') as f:
                 # Header
                 f.write("=" * 70 + "\n")
                 f.write("BUNKMETER - ATTENDANCE REPORT\n")
@@ -897,6 +907,7 @@ class SummaryTab:
                 end_date = today
                 if app_data.get("semester_end") and today > app_data["semester_end"]:
                     end_date = app_data["semester_end"]
+                sem_start = app_data.get("semester_start", "")
                 
                 for subject_data in app_data.get("subjects", []):
                     name = subject_data["name"]
@@ -914,7 +925,7 @@ class SummaryTab:
                             total = count_subject_classes(
                                 name,
                                 app_data.get("batch", ""),
-                                app_data["semester_start"],
+                                sem_start,
                                 end_date,
                                 app_data.get("holidays", [])
                             )
@@ -925,8 +936,8 @@ class SummaryTab:
                         absent_count = 0
                         holidays = app_data.get("holidays", [])
                         for date_str in all_absent_dates:
-                            # Ignore future dates
-                            if date_str > today:
+                            # Ignore future dates and dates before semester start
+                            if date_str > today or (sem_start and date_str < sem_start):
                                 continue
                             date_obj = parse_date(date_str)
                             if date_obj and not is_date_in_holidays(date_obj, holidays):
@@ -935,9 +946,9 @@ class SummaryTab:
                         present = max(0, total - absent_count)
                     
                     attendance_pct = calculate_attendance(present, total)
-                    status, _ = get_attendance_status(attendance_pct)
+                    status, _ = get_subject_status(attendance_pct)
                     
-                    f.write(f"{name:<20} {present:>10} {total:>10} {attendance_pct:>7.1f}% {status:>10}\n")
+                    f.write(f"{name:<20} {present:>10} {total:>12} {attendance_pct:>7.1f}% {status:>10}\n")
                 
                 f.write("-" * 70 + "\n")
             
@@ -1024,6 +1035,7 @@ class SummaryTab:
         end_date = today
         if app_data.get("semester_end") and today > app_data["semester_end"]:
             end_date = app_data["semester_end"]
+        sem_start = app_data.get("semester_start", "")
         
         # Check for existing override
         has_override = subject_data.get("attendance_override") is not None
@@ -1038,19 +1050,19 @@ class SummaryTab:
                 current_total = count_subject_classes(
                     subject_name,
                     app_data.get("batch", ""),
-                    app_data["semester_start"],
+                    sem_start,
                     end_date,
                     app_data.get("holidays", [])
                 )
             
-            # Exclude dates that fall on holidays and future dates from absent count
+            # Exclude dates that fall on holidays, future dates, and pre-semester dates from absent count
             from calculations import parse_date, is_date_in_holidays
             all_absent_dates = subject_data.get("absent_dates", [])
             absent_count = 0
             holidays = app_data.get("holidays", [])
             for date_str in all_absent_dates:
-                # Ignore future dates
-                if date_str > today:
+                # Ignore future dates and dates before semester start
+                if date_str > today or (sem_start and date_str < sem_start):
                     continue
                 date_obj = parse_date(date_str)
                 if date_obj and not is_date_in_holidays(date_obj, holidays):

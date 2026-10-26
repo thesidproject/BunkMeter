@@ -248,15 +248,22 @@ class ModernDialog:
             self.dialog.geometry(f"{dialog_width}x{dialog_height}")
         
         # Get parent position
+        centered = False
         if self.parent:
-            parent_x = self.parent.winfo_rootx()
-            parent_y = self.parent.winfo_rooty()
-            parent_width = self.parent.winfo_width()
-            parent_height = self.parent.winfo_height()
-            
-            x = parent_x + (parent_width - dialog_width) // 2
-            y = parent_y + (parent_height - dialog_height) // 2
-        else:
+            try:
+                if self.parent.winfo_exists() and self.parent.winfo_viewable():
+                    parent_x = self.parent.winfo_rootx()
+                    parent_y = self.parent.winfo_rooty()
+                    parent_width = self.parent.winfo_width()
+                    parent_height = self.parent.winfo_height()
+                    
+                    x = parent_x + (parent_width - dialog_width) // 2
+                    y = parent_y + (parent_height - dialog_height) // 2
+                    centered = True
+            except tk.TclError:
+                centered = False
+        
+        if not centered:
             # Center on screen
             screen_width = self.dialog.winfo_screenwidth()
             screen_height = self.dialog.winfo_screenheight()
@@ -267,7 +274,15 @@ class ModernDialog:
     
     def close(self):
         """Close the dialog"""
-        self.dialog.destroy()
+        try:
+            self.dialog.destroy()
+        except tk.TclError:
+            pass
+        if getattr(self, '_created_root', False) and self.parent:
+            try:
+                self.parent.destroy()
+            except tk.TclError:
+                pass
     
     def wait(self):
         """Wait for dialog to close and return result"""
@@ -334,24 +349,24 @@ class messagebox:
     @staticmethod
     def showinfo(title, message, **kwargs):
         """Show info dialog - compatible with tkinter.messagebox.showinfo"""
-        show_info(None, title, message)
+        show_info(kwargs.get('parent', None), title, message)
     
     @staticmethod
     def showwarning(title, message, **kwargs):
         """Show warning dialog - compatible with tkinter.messagebox.showwarning"""
-        show_warning(None, title, message)
+        show_warning(kwargs.get('parent', None), title, message)
     
     @staticmethod
     def showerror(title, message, **kwargs):
         """Show error dialog - compatible with tkinter.messagebox.showerror"""
-        show_error(None, title, message)
+        show_error(kwargs.get('parent', None), title, message)
     
     @staticmethod
     def askyesno(title, message, **kwargs):
         """Show yes/no dialog - compatible with tkinter.messagebox.askyesno"""
-        return ask_yes_no(None, title, message)
+        return ask_yes_no(kwargs.get('parent', None), title, message)
     
     @staticmethod
     def showsuccess(title, message, **kwargs):
         """Show success dialog (BunkMeter extension)"""
-        show_success(None, title, message)
+        show_success(kwargs.get('parent', None), title, message)

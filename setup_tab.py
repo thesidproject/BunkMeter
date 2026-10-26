@@ -603,57 +603,9 @@ class SetupTab:
             self.skipped_tree.insert("", tk.END, values=(idx, reason, date_val))
     
     def extract_batch_names(self):
-        """
-        Extract all unique batch names from timetable
-        
-        Scans timetable for entries like:
-        - \"CN Lab (B1&B3) / DAA Lab (B2&B4)\" → Extracts: B1&B3, B2&B4
-        - \"Software Lab (Group A) / Software Lab (Group B)\" → Extracts: Group A, Group B
-        
-        How it works:
-        1. Uses regex \\(([^)]+)\\) to find text inside parentheses
-        2. Filters out common words like \"Lab\", \"Tutorial\"
-        3. Returns unique sorted batch names
-        4. Falls back to default B1/B3, B2/B4 if none found
-        
-        To modify:
-        - Add more filter words to the exclusion list [\"Lab\", \"Tutorial\", ...]
-        - Change regex pattern for different parentheses formats
-        - Update fallback batch names
-        
-        Returns:
-            list: Sorted list of unique batch names
-        """
-        batch_names = set()
-        try:
-            active_timetable = get_active_timetable()
-            
-            # Scan all days and time slots
-            for day, time_slots_dict in active_timetable.items():
-                for time_slot, cell_value in time_slots_dict.items():
-                    # Skip empty cells and lunch breaks
-                    if not cell_value or "Lunch" in cell_value:
-                        continue
-                        
-                    # Extract all text inside parentheses using regex
-                    # Pattern: \(([^)]+)\) matches anything between ( and )
-                    matches = re.findall(r'\(([^)]+)\)', cell_value)
-                    
-                    for match in matches:
-                        # Clean whitespace and validate
-                        batch_name = match.strip()
-                        # Exclude common non-batch words
-                        if batch_name and batch_name not in ["Lab", "Tutorial"]:
-                            batch_names.add(batch_name)
-                            
-        except Exception as e:
-            print(f"Error extracting batch names: {e}")
-        
-        # Fallback: Use default batches if none detected
-        if not batch_names:
-            batch_names = {"B1/B3", "B2/B4"}
-        
-        return sorted(batch_names)
+        """Extract all unique batch names from active timetable"""
+        from data_manager import extract_batch_names
+        return extract_batch_names()
     
     def update_batch_options(self):
         """Update batch selection with modern horizontal toggle buttons"""
@@ -719,35 +671,40 @@ class SetupTab:
             messagebox.showerror("Error", "Please select a batch/group before updating!")
             return
         
-        if new_batch != app_data.get("batch"):
-            app_data["batch"] = new_batch
-            weekly_counts = parse_timetable_csv(new_batch)
-            
-            # Validate that subjects exist for this batch
-            if not weekly_counts:
-                messagebox.showerror("Error", f"No subjects found for batch '{new_batch}'!\nPlease check your timetable.")
-                return
-            
-            existing_subjects = {s["name"]: s for s in app_data["subjects"]}
-            app_data["subjects"] = []
-            for subject, count in weekly_counts.items():
-                if subject in existing_subjects:
-                    existing_subjects[subject]["weekly_count"] = count
-                    app_data["subjects"].append(existing_subjects[subject])
-                else:
-                    app_data["subjects"].append({"name": subject, "weekly_count": count, "total_override": None, "attendance_override": None, "absent_dates": []})
-            
-            save_data()
-            self.refresh_all_tabs()
-            
-            # Check if setup is complete (batch + dates set)
-            if self.setup_mode:
-                if self.check_setup_complete():
-                    messagebox.showinfo("Setup Complete", "Batch and dates configured! All features are now available.")
-                else:
-                    messagebox.showinfo("Next Step", "Batch updated! Now please set your semester start and end dates.")
+        app_data["batch"] = new_batch
+        weekly_counts = parse_timetable_csv(new_batch)
+        
+        # Validate that subjects exist for this batch
+        if not weekly_counts:
+            messagebox.showerror("Error", f"No subjects found for batch '{new_batch}'!\nPlease check your timetable.")
+            return
+        
+        existing_subjects = {s["name"]: s for s in app_data.get("subjects", [])}
+        app_data["subjects"] = []
+        for subject, count in weekly_counts.items():
+            if subject in existing_subjects:
+                existing_subjects[subject]["weekly_count"] = count
+                app_data["subjects"].append(existing_subjects[subject])
             else:
-                messagebox.showinfo("Success", "Batch updated successfully!")
+                app_data["subjects"].append({
+                    "name": subject,
+                    "weekly_count": count,
+                    "total_override": None,
+                    "attendance_override": None,
+                    "absent_dates": []
+                })
+        
+        save_data()
+        self.refresh_all_tabs()
+        
+        # Check if setup is complete (batch + dates set)
+        if self.setup_mode:
+            if self.check_setup_complete():
+                messagebox.showinfo("Setup Complete", "Batch and dates configured! All features are now available.")
+            else:
+                messagebox.showinfo("Next Step", "Batch updated! Now please set your semester start and end dates.")
+        else:
+            messagebox.showinfo("Success", "Batch updated successfully!")
     
     def on_dates_update(self):
         app_data = get_app_data()
@@ -1088,11 +1045,11 @@ class SetupTab:
             # Validate dates are not in the future
             from datetime import datetime, timedelta
             today = datetime.now().strftime("%Y-%m-%d")
-            if start > today:
+            if start > today or end > today:
                 messagebox.showerror(
                     "Error", 
                     f"Cannot mark future dates as skipped!\n"
-                    f"Start date {start} is in the future.\n"
+                    f"Start date: {start}, End date: {end}\n"
                     f"Today is {today}."
                 )
                 return

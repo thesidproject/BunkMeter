@@ -196,10 +196,12 @@ class AttendanceCalendar:
         # Validate semester dates
         semester_start = app_data.get("semester_start")
         semester_end = app_data.get("semester_end")
-        if semester_start and semester_end:
-            if not (semester_start <= date_str <= semester_end):
-                messagebox.showinfo("Info", "Cannot mark attendance outside semester period")
-                return
+        if not semester_start or not semester_end:
+            messagebox.showwarning("Setup Required", "Please set semester start and end dates in the Setup tab first.")
+            return
+        if not (semester_start <= date_str <= semester_end):
+            messagebox.showinfo("Info", "Cannot mark attendance outside semester period")
+            return
         
         # Get subjects for this day
         try:
@@ -240,10 +242,12 @@ class AttendanceCalendar:
         # Validate semester dates
         semester_start = app_data.get("semester_start")
         semester_end = app_data.get("semester_end")
-        if semester_start and semester_end:
-            if not (semester_start <= date_str <= semester_end):
-                messagebox.showinfo("Info", "Cannot mark attendance outside semester period")
-                return
+        if not semester_start or not semester_end:
+            messagebox.showwarning("Setup Required", "Please set semester start and end dates in the Setup tab first.")
+            return
+        if not (semester_start <= date_str <= semester_end):
+            messagebox.showinfo("Info", "Cannot mark attendance outside semester period")
+            return
         
         # Get subjects for this day
         day_name = date_obj.strftime("%A").upper()
@@ -279,12 +283,10 @@ class AttendanceCalendar:
         
         if all_absent:
             # Already completely skipped - make all present (remove ALL absences for this date)
-            for subject in subjects:
+            for subject in set(subjects):
                 subject_data = next((s for s in app_data["subjects"] if s["name"] == subject), None)
-                if subject_data:
-                    # Remove ALL occurrences of this date (in case subject appears multiple times)
-                    while date_str in subject_data.get("absent_dates", []):
-                        subject_data["absent_dates"].remove(date_str)
+                if subject_data and "absent_dates" in subject_data:
+                    subject_data["absent_dates"] = [d for d in subject_data["absent_dates"] if d != date_str]
             
             # Remove from skipped_days list (new format: {reason, date})
             app_data["skipped_days"] = [
@@ -297,13 +299,13 @@ class AttendanceCalendar:
                 messagebox.showinfo("Info", "This date is a holiday. Cannot mark as absent.")
                 return
             
-            # Check if already a skipped day
-            existing_skipped = set(s.get("date", s.get("start", "")) for s in app_data.get("skipped_days", []))
-            if date_str in existing_skipped:
-                messagebox.showinfo("Info", "This date is already marked as skipped.")
-                return
+            # Clear existing absences for this date on subjects to prevent duplicate piling
+            for subject in set(subjects):
+                subject_data = next((s for s in app_data["subjects"] if s["name"] == subject), None)
+                if subject_data and "absent_dates" in subject_data:
+                    subject_data["absent_dates"] = [d for d in subject_data["absent_dates"] if d != date_str]
             
-            # Not completely skipped - mark ALL occurrences of all subjects as absent
+            # Not completely skipped - mark occurrences of all subjects as absent
             for subject in subjects:
                 subject_data = next((s for s in app_data["subjects"] if s["name"] == subject), None)
                 if subject_data:
@@ -312,7 +314,11 @@ class AttendanceCalendar:
                     # Add date (will be added once per occurrence in subjects list)
                     subject_data["absent_dates"].append(date_str)
             
-            # Add to skipped_days list (new format: {reason, date})
+            # Update skipped_days list (remove existing entry for this date first if any)
+            app_data["skipped_days"] = [
+                s for s in app_data["skipped_days"]
+                if s.get("date", s.get("start", "")) != date_str
+            ]
             formatted_date = date_obj.strftime("%d %b %Y")
             app_data["skipped_days"].append({
                 "reason": f"Right-click: {formatted_date}",
@@ -546,15 +552,21 @@ class AttendanceCalendar:
         if "skipped_days" not in app_data:
             app_data["skipped_days"] = []
         
-        # Track if all subjects will be absent after save
-        all_will_be_absent = True
-        
-        # Update absent_dates for each subject based on checkbox state
-        # Handle subjects with multiple occurrences (e.g., "Physics Lab__occurrence_1")
+        # Group checkbox states by subject_name to determine exact desired absence count
+        subject_absences = {}
         for subject_key, var in self.check_vars.items():
-            # Extract actual subject name (remove occurrence suffix if present)
             subject_name = subject_key.split("__occurrence_")[0] if "__occurrence_" in subject_key else subject_key
-            
+            if subject_name not in subject_absences:
+                subject_absences[subject_name] = 0
+            if not var.get():
+                subject_absences[subject_name] += 1
+        
+        total_slots = len(self.check_vars)
+        total_absent_slots = sum(subject_absences.values())
+        all_will_be_absent = (total_absent_slots == total_slots) and (total_slots > 0)
+        
+        # Update absent_dates for each subject deterministically (no duplicate accumulation)
+        for subject_name, absent_count in subject_absences.items():
             subject_data = next((s for s in app_data["subjects"] if s["name"] == subject_name), None)
             if not subject_data:
                 continue
@@ -562,18 +574,12 @@ class AttendanceCalendar:
             if "absent_dates" not in subject_data:
                 subject_data["absent_dates"] = []
             
-            is_present = var.get()
+            # Remove all existing occurrences of this date for this subject
+            subject_data["absent_dates"] = [d for d in subject_data["absent_dates"] if d != date_str]
             
-            if is_present:
-                all_will_be_absent = False
-            
-            if not is_present:
-                # Mark as absent - add to absent_dates (can have multiple entries for same date)
+            # Add exactly the desired number of absences
+            for _ in range(absent_count):
                 subject_data["absent_dates"].append(date_str)
-            else:
-                # Mark as present - remove ONE occurrence from absent_dates if exists
-                if date_str in subject_data["absent_dates"]:
-                    subject_data["absent_dates"].remove(date_str)
         
         # Sync with skipped_days list
         # Check if this date is already in skipped_days
@@ -738,9 +744,10 @@ class AttendanceCalendar:
         # Check if date is within semester range
         semester_start = app_data.get("semester_start")
         semester_end = app_data.get("semester_end")
-        if semester_start and semester_end:
-            if not (semester_start <= date_str <= semester_end):
-                return "no_class"  # Outside semester range
+        if not semester_start or not semester_end:
+            return "no_class"  # No semester configured
+        if not (semester_start <= date_str <= semester_end):
+            return "no_class"  # Outside semester range
         
         if self.is_holiday_date(date_str):
             return "holiday"
@@ -912,11 +919,14 @@ class AttendanceCalendar:
         
         # If a date is currently selected and it's in the current month, refresh the panel
         if self.selected_date:
-            date_obj = datetime.strptime(self.selected_date, "%Y-%m-%d")
-            if date_obj.month == self.current_month and date_obj.year == self.current_year:
-                app_data = get_app_data()
-                day_name = date_obj.strftime("%A").upper()
-                batch = app_data.get("batch", "B1/B3")
-                subjects = get_subjects_for_day(day_name, batch)
-                if subjects:
-                    self.show_subjects_panel(self.selected_date, subjects)
+            try:
+                date_obj = datetime.strptime(self.selected_date, "%Y-%m-%d")
+                if date_obj.month == self.current_month and date_obj.year == self.current_year:
+                    app_data = get_app_data()
+                    day_name = date_obj.strftime("%A").upper()
+                    batch = app_data.get("batch", "B1/B3")
+                    subjects = get_subjects_for_day(day_name, batch)
+                    if subjects:
+                        self.show_subjects_panel(self.selected_date, subjects)
+            except (ValueError, TypeError):
+                self.selected_date = None

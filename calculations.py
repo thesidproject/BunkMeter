@@ -36,7 +36,7 @@ def is_date_in_holidays(date, holidays):
     - Old format: {name, start, end} - date ranges (for backwards compatibility)
     
     Args:
-        date: datetime object to check
+        date: datetime or date object to check
         holidays: List of holiday dicts
     
     Returns:
@@ -45,18 +45,21 @@ def is_date_in_holidays(date, holidays):
     if not date or not holidays:
         return False
     
+    # Normalize input date to datetime.date object
+    check_date = date.date() if hasattr(date, "date") and callable(date.date) else date
+    
     for holiday in holidays:
         try:
             # New format: individual date
-            if "date" in holiday:
+            if "date" in holiday and holiday.get("date"):
                 holiday_date = parse_date(holiday.get('date'))
-                if holiday_date and holiday_date.date() == date.date():
+                if holiday_date and holiday_date.date() == check_date:
                     return True
             # Old format: date range (backwards compatibility)
-            elif "start" in holiday and "end" in holiday:
+            elif "start" in holiday and "end" in holiday and holiday.get("start") and holiday.get("end"):
                 start = parse_date(holiday.get('start'))
                 end = parse_date(holiday.get('end'))
-                if start and end and start <= date <= end:
+                if start and end and start.date() <= check_date <= end.date():
                     return True
         except (KeyError, TypeError, AttributeError):
             # Skip malformed holiday entries
@@ -66,9 +69,9 @@ def is_date_in_holidays(date, holidays):
 
 def calculate_attendance(attended, total):
     """Calculate attendance percentage"""
-    if total == 0:
+    if total <= 0 or attended < 0:
         return 0.0
-    return (attended / total) * 100
+    return (attended / total) * 100.0
 
 
 def calculate_safe_skip(attended, total, threshold=SUBJECT_THRESHOLD):
@@ -88,25 +91,20 @@ def calculate_safe_skip(attended, total, threshold=SUBJECT_THRESHOLD):
     
     Returns:
         int: Maximum number of classes that can be skipped safely
-    
-    Example (60% threshold):
-        Attended: 80 classes, Total: 100 classes
-        Current %: 80%
-        Safe skip: (80 - 0.60*100) / 0.60 = (80 - 60) / 0.60 = 33.3 ≈ 33 classes
-        After skipping 33: 80/(100+33) = 60.15% (still safe)
     """
     # Edge case validation
-    if total == 0 or attended < 0 or total < 0:
+    if total <= 0 or attended < 0:
         return 0
     
     if threshold <= 0 or threshold > 100:
-        threshold = 75  # Default fallback
+        threshold = SUBJECT_THRESHOLD
     
     # Calculate maximum classes that can be skipped
     # Formula: skips = (attended - threshold% * total) / threshold%
+    # Use small epsilon (1e-9) to avoid float representation issues like 2.999999999996 -> 2
     try:
         threshold_decimal = threshold / 100.0
-        safe = int((attended - threshold_decimal * total) / threshold_decimal)
+        safe = int((attended - threshold_decimal * total) / threshold_decimal + 1e-9)
         return max(0, safe)  # Never return negative
     except (ZeroDivisionError, OverflowError):
         return 0
@@ -123,14 +121,9 @@ def get_attendance_status(percentage, is_overall=False):
     Returns:
         tuple: (status_text, color)
     """
-    threshold = OVERALL_THRESHOLD if is_overall else SUBJECT_THRESHOLD
-    
-    if percentage >= threshold + 10:  # 10% buffer = Excellent
-        return ("Safe", COLOR_SAFE)
-    elif percentage >= threshold:
-        return ("Warning", COLOR_WARNING)
-    else:
-        return ("At Risk", COLOR_RISK)
+    if is_overall:
+        return get_overall_status(percentage)
+    return get_subject_status(percentage)
 
 
 def get_subject_status(percentage):
