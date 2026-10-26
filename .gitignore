@@ -39,3 +39,6 @@ Thumbs.db
 /.github
 /tkinter_backup
 *.html
+# pixi environments
+.pixi/*
+!.pixi/config.toml
